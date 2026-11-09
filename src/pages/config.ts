@@ -2,7 +2,7 @@
 // Keep this module free of side effects: extension pages import it, and anything
 // imported from the background entry would run the background code in that page.
 
-const LIVE_API_BASE_URL = "https://apibeam.bitsmall.in/";
+const LIVE_API_BASE_URL = "http://localhost:3000/";
 
 /** Ensures a trailing slash, since URLs are built as `${base}app/...`. */
 export const withTrailingSlash = (url: string) => (url.endsWith("/") ? url : `${url}/`);
@@ -13,6 +13,7 @@ export const withTrailingSlash = (url: string) => (url.endsWith("/") ? url : `${
  */
 export const DEFAULT_API_BASE_URL = withTrailingSlash(
   import.meta.env.VITE_API_BASE_URL?.trim() || LIVE_API_BASE_URL
+);
 );
 
 /** chrome.storage.local key holding the user's custom server URL (absent = default). */

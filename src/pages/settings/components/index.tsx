@@ -63,7 +63,7 @@ export const SettingPage = () => {
               >
                 <Settings size={22} />
               </button>
-              <a target="_blank" href="https://github.com/codegv/GPTWeb-to-api/apibeam">
+              <a target="_blank" href="https://github.com/codeGV/GPTWeb-to-api/">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="28px"

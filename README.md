@@ -51,8 +51,8 @@ GPT Web to API is a powerful browser extension that transforms your ChatGPT, Cla
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/codegv/GPTWeb-to-api/apibeam.git
-cd apibeam
+git clone https://github.com/codeGV/GPTWeb-to-api.git
+cd GPTWeb-to-api
 ```
 
 ### 2. Install Dependencies
@@ -147,7 +147,7 @@ Response travels back through the same chain
 
 1. Click the GPT Web to API extension icon
 2. Click **Settings**
-3. Your unique API URL will be displayed (e.g., `https://apibeam.bitsmall.in/app/abc123def456`)
+3. Your unique API URL will be displayed (e.g., `http://localhost:3000/app/abc123def456`)
 
 ### Configuration
 
@@ -165,7 +165,7 @@ Before making requests, configure your language and method:
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://apibeam.bitsmall.in/app/YOUR_ROOM_ID",
+    base_url="http://localhost:3000/app/YOUR_ROOM_ID",
     api_key="not-needed"
 )
 
@@ -185,7 +185,7 @@ print(response.choices[0].message.content)
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://apibeam.bitsmall.in/app/YOUR_ROOM_ID",
+  baseURL: "http://localhost:3000/app/YOUR_ROOM_ID",
   apiKey: "not-needed"
 });
 
@@ -225,13 +225,13 @@ Settings are stored locally using Chrome's storage API:
 
 ## 🖥️ Self-Hosting the Backend
 
-By default GPT Web to API uses the hosted server at `apibeam.bitsmall.in`. If you want full control, you can run your own backend:
+By default GPT Web to API uses the hosted server at `http://localhost:3000/`. If you want full control, you can run your own backend:
 
 1. Clone and start the server:
 
 ```bash
-git clone https://github.com/codegv/GPTWeb-to-api/apibeam-api-server.git
-cd apibeam-api-server
+git clone https://github.com/codeGV/GPTWeb-to-api-server.git
+cd GPTWeb-to-api-server
 yarn setup-and-start
 ```
 
@@ -242,7 +242,7 @@ That's it — the extension will now route all requests through your own server,
 
 **Build-time default:** the "Default server" is set when the extension is built. To make `yarn dev` builds default to a local server, copy `.env.example` to `.env.development.local` (gitignored) and set `VITE_API_BASE_URL` (e.g. `http://localhost:3000/`). Builds without this variable default to the live server. A custom server chosen in Settings takes priority over this default.
 
-> 📖 See the [apibeam-api-server README](https://github.com/codegv/GPTWeb-to-api/apibeam-api-server) for full server documentation.
+> 📖 See the [GPTWeb-to-api-server README](https://github.com/codeGV/GPTWeb-to-api-server) for full server documentation.
 
 
 
@@ -302,7 +302,7 @@ That's it — the extension will now route all requests through your own server,
 ## 📁 Project Structure
 
 ```
-apibeam/
+GPTWeb-to-api/
 ├── src/
 │   ├── pages/
 │   │   ├── background/       # Background service worker
@@ -390,7 +390,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## ⚡ Quick Links
 
-- 🐙 [GitHub Repository](https://github.com/codegv/GPTWeb-to-api/apibeam)
+- 🐙 [GitHub Repository](https://github.com/codeGV/GPTWeb-to-api)
 - 📖 [OpenAI SDK Documentation](https://github.com/openai/openai-python)
 - 📚 [Chrome Extension Documentation](https://developer.chrome.com/docs/extensions/mv3/)
 - 🔌 [Socket.IO Documentation](https://socket.io/docs/)
@@ -411,7 +411,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📞 Support
 
 For issues, questions, or suggestions:
-1. Check existing [GitHub Issues](https://github.com/codegv/GPTWeb-to-api/apibeam/issues)
+1. Check existing [GitHub Issues](https://github.com/codeGV/GPTWeb-to-api/issues)
 2. Create a new issue with detailed information
 3. Include browser, OS, and error messages
 
