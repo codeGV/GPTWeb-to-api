@@ -1,0 +1,367 @@
+import { io } from "socket.io-client";
+import type { Socket } from "socket.io-client";
+import {
+  CUSTOM_API_BASE_URL_KEY,
+  DEFAULT_API_BASE_URL,
+  ServerConfig,
+  normalizeServerUrl,
+} from "../config";
+
+const chatgptBaseUrl = "https://chatgpt.com";
+const claudeBaseUrl = "https://claude.ai/new";
+const zaiBaseUrl = "https://chat.z.ai";
+
+// Helper function to build provider URL with query params for temporary chat
+const buildProviderUrl = (provider: Provider, useTemporaryChat: boolean): string => {
+  if (provider === 'claude') {
+    const url = claudeBaseUrl;
+    return useTemporaryChat ? `${url}?incognito=` : url;
+  } else {
+    const url = provider === 'zai' ? zaiBaseUrl : chatgptBaseUrl;
+    return useTemporaryChat ? `${url}?temporary-chat=true` : url;
+  }
+};
+
+export type Provider = 'chatgpt' | 'claude' | 'zai';
+
+export type SettingsSchema = {
+  language: string;
+  method: string;
+  roomId: string;
+  useTemporaryChat?: boolean;
+};
+
+let socketConnectionStatus: {
+  status: "pending" | "connected" | "failed" | "disconnected";
+  errorMessage?: string;
+} = {
+  status: "disconnected",
+  errorMessage: undefined,
+};
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") {
+    chrome.tabs.create({
+      url: chrome.runtime.getURL("src/pages/settings/index.html"),
+    });
+  }
+});
+
+const createNewRoom = () => {
+  const roomId =
+    Math.random().toString(36).substring(2, 15) +
+    Math.random().toString(36).substring(2, 15);
+  chrome.storage.local.set({ roomId: roomId }, function () {
+    return roomId;
+  });
+  return roomId;
+};
+
+const getRoomId = () => {
+  return new Promise((res) => {
+    chrome.storage.local.get("roomId", function (settings) {
+      let roomId;
+      if (settings?.roomId) {
+        roomId = settings.roomId;
+      } else {
+        roomId = createNewRoom();
+      }
+      res(roomId);
+    });
+  });
+};
+
+const getCustomApiBaseUrl = async (): Promise<string | null> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([CUSTOM_API_BASE_URL_KEY], (result) => {
+      const stored = result[CUSTOM_API_BASE_URL_KEY];
+      resolve(typeof stored === "string" ? normalizeServerUrl(stored) : null);
+    });
+  });
+};
+
+const getApiBaseUrl = async (): Promise<string> =>
+  (await getCustomApiBaseUrl()) ?? DEFAULT_API_BASE_URL;
+
+const getServerConfig = async (): Promise<ServerConfig> => {
+  const customUrl = await getCustomApiBaseUrl();
+  return {
+    defaultUrl: DEFAULT_API_BASE_URL,
+    customUrl,
+    activeUrl: customUrl ?? DEFAULT_API_BASE_URL,
+  };
+};
+
+const getProvider = async (): Promise<Provider> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["provider"], (result) => {
+      resolve((result.provider as Provider) || "chatgpt");
+    });
+  });
+};
+
+const getProviderUrl = async (): Promise<string> => {
+  const provider = await getProvider();
+  const useTemporaryChat = await getUseTemporaryChat();
+  return buildProviderUrl(provider, useTemporaryChat);
+};
+
+const getUseTemporaryChat = async (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["settings"], (result) => {
+      const settings = result.settings as any;
+      resolve(settings?.useTemporaryChat || false);
+    });
+  });
+};
+
+const getConnectUrl = async () => {
+  const roomId = await getRoomId();
+  const base = await getApiBaseUrl();
+  return `${base}app/${roomId}`;
+};
+
+getRoomId();
+
+let tabId: undefined | number;
+let socket: Socket | undefined;
+
+const broadcastConnectionStatus = () => {
+  const payload = {
+    type: "get_connection_status",
+    content: socketConnectionStatus,
+  };
+  try {
+    chrome.runtime.sendMessage(payload, () => chrome.runtime.lastError);
+  } catch {
+  }
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach((tab) => {
+      if (tab.id) {
+        chrome.tabs.sendMessage(
+          tab.id,
+          {
+            type: "get_connection_status",
+            content: socketConnectionStatus,
+          },
+          () => chrome.runtime.lastError // Ignore errors for tabs that don't listen
+        );
+      }
+    });
+  });
+};
+
+async function connectWS() {
+  try {
+    socketConnectionStatus.errorMessage = "";
+    socketConnectionStatus.status = "pending";
+    broadcastConnectionStatus();
+    socket = io(await getApiBaseUrl(), {
+      transports: ["websocket"], // IMPORTANT for stability
+      reconnection: true,
+      reconnectionAttempts: 3,
+    });
+
+    socket.on("connect", async () => {
+      const roomId = await getRoomId();
+      socketConnectionStatus.status = "connected";
+      socketConnectionStatus.errorMessage = "";
+      broadcastConnectionStatus();
+      const base = await getApiBaseUrl();
+      await fetch(`${base}connect/${roomId}?socketId=${socket?.id}`);
+    });
+
+    socket.on("disconnect", () => {
+      disconnectWS();
+    });
+
+    socket.on("connect_error", (err) => handleErrorOnConnect(err));
+    socket.on("connect_failed", (err) => handleErrorOnConnect(err));
+
+    socket.on("serverMessage", async (msg) => {
+      const provider = await getProvider();
+      const useTemporaryChat = await getUseTemporaryChat();
+      const providerUrl = buildProviderUrl(provider, useTemporaryChat);
+      var tabCreated = false;
+      // Helper to send message with retry logic
+      const sendMessageToTabWithRetry = async (id: number, retries = 3, delay = 2000) => {
+        try {
+          const tab = await chrome.tabs.get(id);
+          if (tab) {
+            chrome.tabs.sendMessage(id, {
+              type: "ask_question",
+              content: msg,
+              useTemporaryChat: useTemporaryChat,
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                if(tabCreated) return;
+                // Retry if content script not ready
+                if (retries > 0 && chrome.runtime.lastError.message?.includes('Receiving end does not exist')) {
+                  setTimeout(() => {
+                    sendMessageToTabWithRetry(id, retries - 1, delay);
+                  }, delay);
+                }
+              } else {
+              }
+            });
+          }
+        } catch (err) {
+          if(tabCreated) return;
+          chrome.tabs.create(
+            { url: providerUrl, active: true },
+            (newTab) => {
+              if (newTab.id) {
+                tabId = newTab.id;
+                  if(newTab.id)
+                  sendMessageToTabWithRetry(newTab.id, 3, 2000);
+              }
+            }
+          );
+        }
+      };
+
+      // Try to send to existing tab
+      if (tabId) {
+        sendMessageToTabWithRetry(tabId);
+      } else {
+        tabCreated = true;
+        // No tab exists, create one
+        chrome.tabs.create(
+          { url: providerUrl, active: true },
+          (tab) => {
+            if (tab.id) {
+              tabId = tab.id;
+              // Wait longer for new tab content script to load
+              setTimeout(() => {
+                if(tab.id)
+                sendMessageToTabWithRetry(tab.id, 3, 2000);
+              }, 5000);
+            }
+          }
+        );
+      }
+    });
+  } catch (e: any) {
+    handleErrorOnConnect(e);
+  }
+}
+
+const disconnectWS = () => {
+  socket?.disconnect();
+  socket = undefined;
+  socketConnectionStatus.status = "disconnected";
+  socketConnectionStatus.errorMessage = undefined;
+  broadcastConnectionStatus();
+};
+
+const handleErrorOnConnect = (err: any) => {
+  socketConnectionStatus.status = "disconnected";
+  socketConnectionStatus.errorMessage = err.message;
+  broadcastConnectionStatus();
+};
+
+type AgentMessage = {
+  type: "question_answer" | "set_settings" | "get_settings" | "get_connect_url";
+  content: string | SettingsSchema;
+};
+
+chrome.runtime.onMessage.addListener(
+  async (msg: AgentMessage, _sender, sendResponse) => {
+    const tabId = _sender.tab?.id;
+    if (msg.type === "question_answer") {
+      const roomId = await getRoomId();
+      socket?.emit("clientResponse", { roomId, message: msg.content });
+    } else if (msg.type === "set_settings") {
+      chrome.storage.local.set({ settings: msg.content }, function () {});
+    } else if (msg.type === "get_settings") {
+      if (tabId) {
+        chrome.storage.local.get("settings", function (result) {
+          chrome.tabs.sendMessage(tabId, {
+            type: "set_settings",
+            content: result.settings,
+          });
+        });
+      }
+    } else if (msg.type === "get_connect_url" || msg.type === "get_api_base_url") {
+      if (tabId) {
+        const base = await getApiBaseUrl();
+        const payload = msg.type === "get_connect_url" ? await getConnectUrl() : base;
+        const responseType = msg.type === "get_connect_url" ? "set_connect_url" : "set_api_base_url";
+        chrome.tabs.sendMessage(tabId, {
+          type: responseType,
+          content: payload,
+        });
+      }
+    } else if (msg.type === "get_server_config") {
+      if (tabId) {
+        chrome.tabs.sendMessage(tabId, {
+          type: "set_server_config",
+          content: await getServerConfig(),
+        });
+      }
+    } else if (msg.type === "set_api_base_url") {
+      // Empty content = use the default server; otherwise save a custom server URL.
+      const raw = typeof msg.content === "string" ? msg.content : "";
+      const customUrl = raw.trim() ? normalizeServerUrl(raw) : null;
+      if (raw.trim() && !customUrl) {
+        if (tabId) {
+          chrome.tabs.sendMessage(tabId, {
+            type: "server_config_error",
+            content: "Enter a valid http:// or https:// URL.",
+          });
+        }
+        return true;
+      }
+
+      if (customUrl && customUrl !== DEFAULT_API_BASE_URL) {
+        await chrome.storage.local.set({ [CUSTOM_API_BASE_URL_KEY]: customUrl });
+      } else {
+        await chrome.storage.local.remove(CUSTOM_API_BASE_URL_KEY);
+      }
+
+      // Move an active connection over to the new server
+      const wasConnected = !!socket?.connected;
+      disconnectWS();
+      if (wasConnected) connectWS();
+
+      if (tabId) {
+        chrome.tabs.sendMessage(tabId, {
+          type: "set_server_config",
+          content: await getServerConfig(),
+        });
+        chrome.tabs.sendMessage(tabId, {
+          type: "set_connect_url",
+          content: await getConnectUrl(),
+        });
+      }
+    } else if (msg.type === "set_provider") {
+      const provider = msg.content as Provider;
+      chrome.storage.local.set({ provider }, () => {
+        if (tabId) {
+          chrome.tabs.sendMessage(tabId, {
+            type: "set_provider",
+            content: provider,
+          });
+        }
+      });
+    } else if (msg.type === "get_provider") {
+      if (tabId) {
+        const provider = await getProvider();
+        chrome.tabs.sendMessage(tabId, {
+          type: "set_provider",
+          content: provider,
+        });
+      }
+    } else if (msg.type === "connect") {
+      connectWS();
+    } else if (msg.type === "disconnect") {
+      disconnectWS();
+    } else if (msg.type === "get_connection_status") {
+      sendResponse({
+        type: "get_connection_status",
+        content: socketConnectionStatus,
+      });
+    }
+    return true; // Keep async messaging alive
+  }
+);
